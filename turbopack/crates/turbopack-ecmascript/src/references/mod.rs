@@ -285,34 +285,42 @@ impl AnalyzeEcmascriptModuleResultBuilder {
             self.add_code_gen(bindings);
         }
 
-        let mut references: Vec<_> = self.references.into_iter().collect();
-        for r in references.iter_mut() {
-            *r = r.to_resolved().await?;
-        }
-        let mut local_references: Vec<_> = track_reexport_references
+        let references: Vec<_> = self.references.into_iter().collect();
+        let references = references
+            .iter()
+            .map(|v| async move { v.to_resolved().await })
+            .try_join()
+            .await?;
+        let local_references: Vec<_> = track_reexport_references
             .then(|| self.local_references.into_iter())
             .into_iter()
             .flatten()
             .collect();
-        for r in local_references.iter_mut() {
-            *r = r.to_resolved().await?;
-        }
-        let mut reexport_references: Vec<_> = track_reexport_references
+        let local_references = local_references
+            .iter()
+            .map(|v| async move { v.to_resolved().await })
+            .try_join()
+            .await?;
+        let reexport_references: Vec<_> = track_reexport_references
             .then(|| self.reexport_references.into_iter())
             .into_iter()
             .flatten()
             .collect();
-        for r in reexport_references.iter_mut() {
-            *r = r.to_resolved().await?;
-        }
-        let mut evaluation_references: Vec<_> = track_reexport_references
+        let reexport_references = reexport_references
+            .iter()
+            .map(|v| async move { v.to_resolved().await })
+            .try_join()
+            .await?;
+        let evaluation_references: Vec<_> = track_reexport_references
             .then(|| self.evaluation_references.into_iter())
             .into_iter()
             .flatten()
             .collect();
-        for r in evaluation_references.iter_mut() {
-            *r = r.to_resolved().await?;
-        }
+        let evaluation_references = evaluation_references
+            .iter()
+            .map(|v| async move { v.to_resolved().await })
+            .try_join()
+            .await?;
         for c in self.code_gens.iter_mut() {
             match c {
                 CodeGen::CodeGenerateable(c) => {
@@ -331,16 +339,10 @@ impl AnalyzeEcmascriptModuleResultBuilder {
             AnalyzeEcmascriptModuleResult {
                 // TODO(ResolvedVc): this is messy because I don't want to
                 //                   touch core while KDY is working on it
-                references: ResolvedVc::cell(references.into_iter().map(|rvc| *rvc).collect()),
-                local_references: ResolvedVc::cell(
-                    local_references.into_iter().map(|rvc| *rvc).collect(),
-                ),
-                reexport_references: ResolvedVc::cell(
-                    reexport_references.into_iter().map(|rvc| *rvc).collect(),
-                ),
-                evaluation_references: ResolvedVc::cell(
-                    evaluation_references.into_iter().map(|rvc| *rvc).collect(),
-                ),
+                references: ResolvedVc::cell(references),
+                local_references: ResolvedVc::cell(local_references),
+                reexport_references: ResolvedVc::cell(reexport_references),
+                evaluation_references: ResolvedVc::cell(evaluation_references),
                 code_generation: ResolvedVc::cell(self.code_gens),
                 exports: self.exports.resolved_cell(),
                 async_module: self.async_module,
@@ -3379,7 +3381,7 @@ fn is_invoking_node_process_eval(args: &[JsValue]) -> bool {
 #[turbo_tasks::function]
 fn maybe_decode_data_url(url: RcStr) -> Vc<OptionSourceMap> {
     if let Ok(map) = decode_data_url(&url) {
-        Vc::cell(Some(SourceMap::new_decoded(map).cell()))
+        Vc::cell(Some(SourceMap::new_decoded(map).resolved_cell()))
     } else {
         Vc::cell(None)
     }
